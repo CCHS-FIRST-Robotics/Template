@@ -1,0 +1,664 @@
+/**
+ * Based on WPILib Command Robot Template
+ */
+
+package frc.robot;
+
+import static edu.wpi.first.units.Units.*;
+
+import edu.wpi.first.wpilibj2.command.*;
+import edu.wpi.first.wpilibj.DriverStation;
+import edu.wpi.first.wpilibj.DriverStation.Alliance;
+import edu.wpi.first.wpilibj.smartdashboard.*;
+import edu.wpi.first.math.geometry.*;
+import choreo.auto.AutoChooser;
+import org.ironmaple.simulation.SimulatedArena;
+import org.ironmaple.simulation.drivesims.SwerveDriveSimulation;
+import org.littletonrobotics.junction.*;
+import frc.robot.commands.*;
+import frc.robot.subsystems.drive.*;
+import frc.robot.subsystems.poseEstimator.*;
+import frc.robot.subsystems.poseEstimator.odometry.*;
+import frc.robot.subsystems.poseEstimator.vision.*;
+import frc.robot.subsystems.fuelIO.*;
+import frc.robot.subsystems.fuelIO.intake.*;
+import frc.robot.subsystems.fuelIO.shooter.*;
+import frc.robot.subsystems.leds.*;
+import frc.robot.utils.*;
+
+public class RobotContainer {
+    // ————— controllers ————— //
+
+    private final Controller controller = new Controller(Constants.CONTROLLER_PORT);
+
+    // ————— subsystems ————— //
+
+    private final Drive drive;
+    private final PoseEstimator poseEstimator;
+    private final Intake intake;
+    private final Shooter shooter;
+    private final LedStrip ledStrip;
+
+    // ————— utils ————— //
+
+    private CommandFactory commandFactory;
+    private AutoGenerator autoGenerator;
+    private AutoChooser autoChooser;
+    private SwerveDriveSimulation driveSimulation;
+    private FuelSim fuelSimulation;
+
+    // ————— testing variables ————— //
+    
+    @AutoLogOutput(key = "outputs/testing/shooterVelocity")
+    private double shooterVelocity = 0;
+    @AutoLogOutput(key = "outputs/testing/kickerVelocity")
+    private double kickerVelocity = 0;
+
+    public RobotContainer() {
+        switch (Constants.CURRENT_MODE) {
+            case REAL: // instantiate hardware IO implementations
+                if (Constants.INSTANTIATE_DRIVE_AND_POSEESTIMATOR) {
+                    drive = new Drive(
+                        new ModuleIOTalonFXReal(DriveConstants.SWERVE_MODULE_CONSTANTS[0]),
+                        new ModuleIOTalonFXReal(DriveConstants.SWERVE_MODULE_CONSTANTS[1]),
+                        new ModuleIOTalonFXReal(DriveConstants.SWERVE_MODULE_CONSTANTS[2]),
+                        new ModuleIOTalonFXReal(DriveConstants.SWERVE_MODULE_CONSTANTS[3])
+                    );
+
+                    poseEstimator = new PoseEstimator(
+                    new GyroIOPigeon2(),
+                        new CameraIOPhotonVision[] {
+                            new CameraIOPhotonVision(VisionConstants.cameraNames[0], VisionConstants.robotToCameraTransforms[0]),
+                            new CameraIOPhotonVision(VisionConstants.cameraNames[1], VisionConstants.robotToCameraTransforms[1])
+                        }, 
+                        drive, 
+                        Constants.ROBOT_START_POSE
+                    );
+                } else {
+                    drive = new Drive(
+                        new ModuleIO() {},
+                        new ModuleIO() {},
+                        new ModuleIO() {},
+                        new ModuleIO() {}
+                    );
+                    
+                    poseEstimator = new PoseEstimator(
+                        new GyroIO() {}, 
+                        new CameraIO[] {
+                            new CameraIO() {}, 
+                            new CameraIO() {}
+                        }, 
+                        drive, 
+                        new Pose2d()
+                    );
+                }
+
+                if (Constants.INSTANTIATE_INTAKE) {
+                    intake = new Intake(
+                        new IntakeIOReal(FuelConstants.INTAKE_MOTOR_ID), 
+                        new PivotIOReal(FuelConstants.PIVOT_MOTOR_ID)
+                    );
+                } else {
+                    intake = new Intake(
+                        new IntakeIO() {}, 
+                        new PivotIO() {}
+                    );
+                }
+
+                if (Constants.INSTANTIATE_SHOOTER) {
+                    shooter = new Shooter(
+                        new ShooterIOReal(FuelConstants.SHOOTER_MOTOR_ID, FuelConstants.SHOOTER_FOLLOWER_ID), 
+                        new KickerIOReal(FuelConstants.KICKER_MOTOR_ID)
+                    );
+                } else {
+                    shooter = new Shooter(
+                        new ShooterIO() {}, 
+                        new KickerIO() {}
+                    );
+                }
+
+                ledStrip = new LedStrip();
+                break;
+            case SIM: // instantiate physics sim IO implementations
+                configureSimulation();
+
+                if (Constants.INSTANTIATE_DRIVE_AND_POSEESTIMATOR) {
+                    drive = new Drive(
+                        new ModuleIOTalonFXSim(DriveConstants.SWERVE_MODULE_CONSTANTS[0], driveSimulation.getModules()[0]),
+                        new ModuleIOTalonFXSim(DriveConstants.SWERVE_MODULE_CONSTANTS[1], driveSimulation.getModules()[1]),
+                        new ModuleIOTalonFXSim(DriveConstants.SWERVE_MODULE_CONSTANTS[2], driveSimulation.getModules()[2]),
+                        new ModuleIOTalonFXSim(DriveConstants.SWERVE_MODULE_CONSTANTS[3], driveSimulation.getModules()[3])
+                    );
+
+                    poseEstimator = new PoseEstimator(
+                        new GyroIOSim(driveSimulation.getGyroSimulation()),
+                        new CameraIOPhotonVision[] {
+                            new CameraIOPhotonVisionSim(
+                                VisionConstants.cameraNames[0], 
+                                VisionConstants.robotToCameraTransforms[0], 
+                                VisionConstants.cameraProperties[0], 
+                                driveSimulation::getSimulatedDriveTrainPose
+                            ),
+                            new CameraIOPhotonVisionSim(
+                                VisionConstants.cameraNames[1], 
+                                VisionConstants.robotToCameraTransforms[1], 
+                                VisionConstants.cameraProperties[1], 
+                                driveSimulation::getSimulatedDriveTrainPose
+                            ),
+                        },
+                        drive, 
+                        Constants.ROBOT_START_POSE
+                    );
+                } else {
+                    drive = new Drive(
+                        new ModuleIO() {},
+                        new ModuleIO() {},
+                        new ModuleIO() {},
+                        new ModuleIO() {}
+                    );
+                    
+                    poseEstimator = new PoseEstimator(
+                        new GyroIO() {}, 
+                        new CameraIO[] {
+                            new CameraIO() {}, 
+                            new CameraIO() {}
+                        }, 
+                        drive, 
+                        new Pose2d()
+                    );
+                }
+
+                if (Constants.INSTANTIATE_INTAKE) {
+                    intake = new Intake(
+                        new IntakeIOSim(), 
+                        new PivotIOSim()
+                    );
+                } else {
+                    intake = new Intake(
+                        new IntakeIO() {}, 
+                        new PivotIO() {}
+                    );
+                }
+
+                if (Constants.INSTANTIATE_SHOOTER) {
+                    shooter = new Shooter(
+                        new ShooterIOSim(),
+                        new KickerIOSim()
+                    );
+                } else {
+                    shooter = new Shooter(
+                        new ShooterIO() {}, 
+                        new KickerIO() {}
+                    );
+                }
+
+                ledStrip = new LedStrip();
+                break;
+            default: // disable IO implementations (we use "default" instead of "case REPLAY:" to avoid errors that say the objects may have not been initialized)
+                drive = new Drive(
+                    new ModuleIO() {},
+                    new ModuleIO() {},
+                    new ModuleIO() {},
+                    new ModuleIO() {}
+                );
+                
+                poseEstimator = new PoseEstimator(
+                    new GyroIO() {}, 
+                    new CameraIO[] {
+                        new CameraIO() {}, 
+                        new CameraIO() {}
+                    }, 
+                    drive, 
+                    new Pose2d()
+                );
+
+                intake = new Intake(
+                    new IntakeIO() {}, 
+                    new PivotIO() {}
+                );
+
+                shooter = new Shooter(
+                    new ShooterIO() {}, 
+                    new KickerIO() {}
+                );
+
+                ledStrip = new LedStrip();
+                break;
+        }
+
+        drive.setPoseEstimator(poseEstimator);
+
+        commandFactory = new CommandFactory(
+            controller, 
+            drive, 
+            poseEstimator, 
+            intake, 
+            shooter,
+            ledStrip,
+            fuelSimulation
+        );
+
+        configureButtonBindings();
+        configureDriverInfo();
+        configureAutos();
+    }
+
+    private void configureButtonBindings() {
+        // drive (always enabled)
+        drive.setDefaultCommand(commandFactory.getDriveWithJoysticksCommand());
+        
+        // all other button bindings
+        switch (Constants.CURRENT_BUTTON_BINDINGS) {
+            case COMPETITION: 
+                // x-lock
+                controller.x().whileTrue(
+                    Commands.run(() -> drive.xLock())
+                );
+
+                // drive slow
+                controller.leftStick().whileTrue( // on the gamesir controller, L4 is mapped to leftStick button
+                    commandFactory.getDriveSpeedCommand(
+                        MetersPerSecond.of(1), 
+                        RadiansPerSecond.of(1 / DriveConstants.TRACK_RADIUS), 
+                        DriveConstants.MAX_ALLOWED_LINEAR_ACCEL, 
+                        DriveConstants.MAX_ALLOWED_ANGULAR_ACCEL
+                    )
+                );
+
+                // drive fast
+                controller.rightStick().whileTrue( // on the gamesir controller, R4 is mapped to rightStick button
+                    commandFactory.getDriveSpeedCommand(
+                        DriveConstants.MAX_THEORETICAL_LINEAR_SPEED, 
+                        DriveConstants.MAX_THEORETICAL_ANGULAR_SPEED, 
+                        MetersPerSecondPerSecond.of(100), 
+                        RadiansPerSecondPerSecond.of(100)
+                    )
+                );
+
+                // drive and intake
+                controller.leftTrigger().and(controller.rightTrigger().negate()).whileTrue(
+                    commandFactory.getDriveAndIntakeCommand()
+                );
+
+                // drive and shoot
+                controller.leftTrigger().negate().and(controller.rightTrigger()).whileTrue(
+                    commandFactory.getDriveAndShootCommand(true, true)
+                );
+
+                // shoot
+                controller.pov(0).whileTrue(
+                    commandFactory.getShootCommand(
+                        () -> RotationsPerSecond.of(50), 
+                        true, 
+                        true, 
+                        true
+                    )
+                );
+                
+                // pivot
+                controller.leftBumper().onTrue(commandFactory.getTogglePivotCommand());
+                controller.y().onTrue(commandFactory.getSetPivotEncoderPositionUpCommand());
+                controller.a().onTrue(commandFactory.getSetPivotEncoderPositionDownCommand());
+
+                // unstick
+                controller.pov(180).whileTrue(
+                    new StartEndCommand(
+                        () -> {
+                            shooter.setShooterVelocity(RotationsPerSecond.of(-10));
+                            shooter.setKickerVelocity(RotationsPerSecond.of(-10));
+                        },
+                        () -> {
+                            shooter.setShooterVelocity(RotationsPerSecond.of(0));
+                            shooter.setKickerVelocity(RotationsPerSecond.of(0));
+                        }
+                    )
+                );
+
+                // toggle trench align
+                controller.b().onTrue(new InstantCommand(
+                    () -> {
+                        Constants.ENABLE_TRENCH_ALIGN = !Constants.ENABLE_TRENCH_ALIGN;
+                        SmartDashboard.putBoolean("smartDashboard/toggles/Enable Trench Align", Constants.ENABLE_TRENCH_ALIGN);
+                    }
+                ));
+
+                // motor check
+                SmartDashboard.putData("smartDashboard/buttons/Check Motors", commandFactory.getCheckMotorsCommand());
+                break;
+            case SHOWCASE:
+                // safety overrides
+                Constants.ENABLE_TRENCH_ALIGN = false;
+                Constants.ENABLE_PIVOT = true;
+                Constants.ENABLE_PIVOT_AGITATION = false;
+                Constants.ENABLE_SHOOT_ON_THE_MOVE = false;
+                DriveConstants.ALLOWED_LINEAR_SPEED = MetersPerSecond.of(1);
+                DriveConstants.ALLOWED_ANGULAR_SPEED = RadiansPerSecond.of(1 / DriveConstants.TRACK_RADIUS);
+                DriveConstants.ALLOWED_LINEAR_ACCEL = MetersPerSecondPerSecond.of(7);
+                DriveConstants.ALLOWED_ANGULAR_ACCEL = RadiansPerSecondPerSecond.of(7 / DriveConstants.TRACK_RADIUS);
+
+                // drive and intake
+                controller.leftTrigger().and(controller.rightTrigger().negate()).whileTrue(
+                    commandFactory.getDriveAndIntakeCommand()
+                );
+
+                // drive and shoot
+                controller.leftTrigger().negate().and(controller.rightTrigger()).whileTrue(
+                    commandFactory.getDriveAndShootCommand(true, true)
+                );
+
+                // shoot
+                controller.pov(0).whileTrue(
+                    commandFactory.getShootCommand(
+                        () -> RotationsPerSecond.of(50), 
+                        true, 
+                        true, 
+                        true
+                    )
+                );
+                
+                // pivot
+                controller.leftBumper().onTrue(commandFactory.getTogglePivotCommand());
+                controller.y().onTrue(commandFactory.getSetPivotEncoderPositionUpCommand());
+                controller.a().onTrue(commandFactory.getSetPivotEncoderPositionDownCommand());
+
+                // unstick
+                controller.pov(180).whileTrue(
+                    new StartEndCommand(
+                        () -> {
+                            shooter.setShooterVelocity(RotationsPerSecond.of(-10));
+                            shooter.setKickerVelocity(RotationsPerSecond.of(-10));
+                        },
+                        () -> {
+                            shooter.setShooterVelocity(RotationsPerSecond.of(0));
+                            shooter.setKickerVelocity(RotationsPerSecond.of(0));
+                        }
+                    )
+                );
+
+                // adjust drive speed (depending on the age of the person driving, I guess)
+                SmartDashboard.putData("smartDashboard/buttons/Increment Drive Speed", new InstantCommand(() -> {
+                    DriveConstants.ALLOWED_LINEAR_SPEED = MetersPerSecond.of(Math.max(DriveConstants.ALLOWED_LINEAR_SPEED.in(MetersPerSecond) + 0.5, 0));
+                    DriveConstants.ALLOWED_ANGULAR_SPEED = RadiansPerSecond.of(Math.max(DriveConstants.ALLOWED_LINEAR_SPEED.in(MetersPerSecond) + 0.5, 0) / DriveConstants.TRACK_RADIUS);
+                }));
+                SmartDashboard.putData("smartDashboard/buttons/Decrement Drive Speed", new InstantCommand(() -> {
+                    DriveConstants.ALLOWED_LINEAR_SPEED = MetersPerSecond.of(Math.max(DriveConstants.ALLOWED_LINEAR_SPEED.in(MetersPerSecond) - 0.5, 0));
+                    DriveConstants.ALLOWED_ANGULAR_SPEED = RadiansPerSecond.of(Math.max(DriveConstants.ALLOWED_LINEAR_SPEED.in(MetersPerSecond) - 0.5, 0) / DriveConstants.TRACK_RADIUS);
+                }));
+                break;
+            case TESTING_BPS: 
+                controller.leftTrigger().whileTrue(
+                    new StartEndCommand(
+                        () -> {
+                            shooter.setKickerVelocity(RotationsPerSecond.of(kickerVelocity));
+                        }, 
+                        () -> {
+                            shooter.setKickerVelocity(RotationsPerSecond.of(0));
+                        }
+                    )
+                );
+
+                controller.rightTrigger().whileTrue(
+                    new StartEndCommand(
+                        () -> {
+                            shooter.setShooterVelocity(RotationsPerSecond.of(shooterVelocity));
+                        }, 
+                        () -> {
+                            shooter.setShooterVelocity(RotationsPerSecond.of(0));
+                        }
+                    )
+                );
+
+                // increment shooter and kicker velocity
+                controller.x().onTrue(
+                    new InstantCommand(() -> {
+                        shooterVelocity += 1;
+                    })
+                );
+                controller.b().onTrue(
+                    new InstantCommand(() -> {
+                        shooterVelocity -= 1;
+                    })
+                );
+                controller.y().onTrue(
+                    new InstantCommand(() -> {
+                        kickerVelocity += 5;
+                    })
+                );
+                controller.a().onTrue(
+                    new InstantCommand(() -> {
+                        kickerVelocity -= 5;
+                    })
+                );
+                break;
+            case TESTING_SHOOTER_MAP:
+                controller.x().whileTrue( // orient the robot
+                    commandFactory.getUpdateShootUtilCommand()
+                    .alongWith(commandFactory.getDriveWithJoysticksShooterCommand())
+                );
+
+                controller.y().whileTrue( // shoot
+                    commandFactory.getShootCommand(
+                        () -> RotationsPerSecond.of(shooter.shooterIOInputs.velocitySetpoint), 
+                        true,
+                        true,
+                        true
+                    )
+                );
+
+                controller.a().onTrue( // print hashmap line
+                    new InstantCommand(() -> 
+                        {
+                            System.out.println("SHOOTER_VELOCITY_MAP.put(" + ShootUtil.getTargetDistance().magnitude() + ", " + shooter.shooterIOInputs.velocity + ");");
+                        }
+                    )
+                );
+
+                // adjust the shooter velocity
+                controller.leftTrigger().onTrue(
+                    new InstantCommand(() -> {
+                        shooterVelocity -= 0.5;
+                        shooter.setShooterVelocity(RotationsPerSecond.of(shooterVelocity));
+                    })
+                );
+                controller.rightTrigger().onTrue(
+                    new InstantCommand(() -> { 
+                        shooterVelocity += 0.5;
+                        shooter.setShooterVelocity(RotationsPerSecond.of(shooterVelocity));
+                    })
+                );
+                break;
+            case TESTING_DRIVE_WITH_POSITION: 
+                // for calibrating the robot's non-choreo position PID. I had it set the kicker velocity so I'd know exactly when the DriveWithPosition command finished
+                controller.x().onTrue(
+                    new DriveWithPosition(drive, poseEstimator, new Pose2d(0, 0, new Rotation2d()), false)
+                    .andThen(shooter.getSetKickerVelocityCommand(RotationsPerSecond.of(20)))
+                );
+                controller.y().onTrue(
+                    new DriveWithPosition(drive, poseEstimator, new Pose2d(3, 3, new Rotation2d(Degrees.of(90))), false)
+                    .andThen(shooter.getSetKickerVelocityCommand(RotationsPerSecond.of(20)))
+                );
+                controller.b().onTrue(
+                    new DriveWithPosition(drive, poseEstimator, new Pose2d(3, 0, new Rotation2d(Degrees.of(180))), false)
+                    .andThen(shooter.getSetKickerVelocityCommand(RotationsPerSecond.of(20)))
+                );
+                controller.leftTrigger().onTrue(
+                    new DriveWithPosition(drive, poseEstimator, new Pose2d(1, 2, new Rotation2d()), false)
+                    .andThen(shooter.getSetKickerVelocityCommand(RotationsPerSecond.of(20)))
+                );
+                controller.rightTrigger().onTrue(
+                    new DriveWithPosition(drive, poseEstimator, new Pose2d(1.5, 2, new Rotation2d()), false)
+                    .andThen(shooter.getSetKickerVelocityCommand(RotationsPerSecond.of(20)))
+                );
+
+                controller.leftBumper().onTrue(shooter.getSetKickerVelocityCommand(RotationsPerSecond.of(0)));
+                
+                // re-zero the robot
+                controller.a().onTrue(new InstantCommand(() -> poseEstimator.resetPosition(new Pose2d(0, 0, new Rotation2d()))));
+                break;
+        }
+
+        // ————— simulation bindings ————— //
+
+        if (Constants.CURRENT_MODE == Constants.ROBOT_MODE.SIM) {
+            SmartDashboard.putData("smartDashboard/buttons/Clear Fuel", new InstantCommand(() -> fuelSimulation.clearFuel()));
+        }
+    }
+
+    // ————— driver info ————— //
+
+    public void configureDriverInfo() {
+        // initialize toggles
+        SmartDashboard.putBoolean("smartDashboard/toggles/Enable Trench Align", Constants.ENABLE_TRENCH_ALIGN);
+        SmartDashboard.putBoolean("smartDashboard/toggles/Enable Pivot", Constants.ENABLE_PIVOT);
+        SmartDashboard.putBoolean("smartDashboard/toggles/Enable Pivot Agitation", Constants.ENABLE_PIVOT_AGITATION);
+        SmartDashboard.putBoolean("smartDashboard/toggles/Enable Shoot on the Move", Constants.ENABLE_SHOOT_ON_THE_MOVE);
+    }
+
+    public void updateDriverInfo() {
+        // update field2d
+        SmartDashboard.putData("smartDashboard/field2d", Constants.FieldConstants.FIELD2D);
+
+        // update trench zone boundaries
+        Logger.recordOutput("outputs/fieldInfo/zones/trenches/current/blue left", Constants.FieldConstants.Zones.TRENCH_ZONES.zones[0].getCorners());
+        Logger.recordOutput("outputs/fieldInfo/zones/trenches/current/blue right", Constants.FieldConstants.Zones.TRENCH_ZONES.zones[1].getCorners());
+        Logger.recordOutput("outputs/fieldInfo/zones/trenches/current/red left", Constants.FieldConstants.Zones.TRENCH_ZONES.zones[2].getCorners());
+        Logger.recordOutput("outputs/fieldInfo/zones/trenches/current/red right", Constants.FieldConstants.Zones.TRENCH_ZONES.zones[3].getCorners());
+
+        // update toggles
+        Constants.ENABLE_TRENCH_ALIGN = SmartDashboard.getBoolean("smartDashboard/toggles/Enable Trench Align", Constants.ENABLE_TRENCH_ALIGN);
+        Constants.ENABLE_PIVOT = SmartDashboard.getBoolean("smartDashboard/toggles/Enable Pivot", Constants.ENABLE_PIVOT);
+        Constants.ENABLE_PIVOT_AGITATION = SmartDashboard.getBoolean("smartDashboard/toggles/Enable Pivot Agitation", Constants.ENABLE_PIVOT_AGITATION);
+        Constants.ENABLE_SHOOT_ON_THE_MOVE = SmartDashboard.getBoolean("smartDashboard/toggles/Enable Shoot on the Move", Constants.ENABLE_SHOOT_ON_THE_MOVE);
+        Logger.recordOutput("outputs/toggles/ENABLE_TRENCH_ALIGN", Constants.ENABLE_TRENCH_ALIGN);
+        Logger.recordOutput("outputs/toggles/ENABLE_PIVOT", Constants.ENABLE_PIVOT);
+        Logger.recordOutput("outputs/toggles/ENABLE_PIVOT_AGITATION", Constants.ENABLE_PIVOT_AGITATION);
+        Logger.recordOutput("outputs/toggles/ENABLE_SHOOT_ON_THE_MOVE", Constants.ENABLE_SHOOT_ON_THE_MOVE);
+
+        // update game info
+        if (Constants.CURRENT_MODE == Constants.ROBOT_MODE.REAL || Constants.REALISTIC_SIM) {
+            Logger.recordOutput("outputs/fieldInfo/remainingShiftTime", HubUtil.timeRemainingInCurrentShift().orElse(Seconds.of(-1)));
+            Logger.recordOutput("outputs/fieldInfo/currentShift", HubUtil.getCurrentShift().orElse(HubUtil.Shift.NO_SHIFT));
+            Logger.recordOutput("outputs/fieldInfo/hubActive", HubUtil.isActive());
+            Logger.recordOutput(
+            "outputs/fieldInfo/hubScore", 
+                DriverStation.getAlliance().orElse(Alliance.Blue) == Alliance.Blue ? 
+                FuelSim.BLUE_HUB.getScore() : 
+                FuelSim.RED_HUB.getScore()
+            );
+        }
+    }
+
+    // ————— autonomous ————— //
+
+    private void configureAutos() {
+        autoGenerator = new AutoGenerator(
+            drive, 
+            poseEstimator, 
+            intake, 
+            shooter, 
+            driveSimulation, 
+            commandFactory
+        );
+        autoChooser = new AutoChooser(); // creates and selects a "do nothing" auto by default
+
+        // add autoroutines to autochooser
+
+        autoChooser.addRoutine("Test", () -> autoGenerator.test());
+        autoChooser.addRoutine("BeMeanLeft", () -> autoGenerator.beMeanLeft());
+        autoChooser.addRoutine("BeMeanRight", () -> autoGenerator.beMeanRight());
+
+        if (Constants.INSTANTIATE_INTAKE
+            && Constants.INSTANTIATE_SHOOTER
+        ) {
+            autoChooser.addCmd("BackUpAndShoot", () -> autoGenerator.backUpAndShoot());
+            autoChooser.addRoutine("CenterFuelLeft", () -> autoGenerator.centerFuelLeft());
+            autoChooser.addRoutine("CenterFuelRight", () -> autoGenerator.centerFuelRight());
+            autoChooser.addRoutine("RepeatingCenterFuelLeft", () -> autoGenerator.repeatingCenterFuelLeft());
+            autoChooser.addRoutine("RepeatingCenterFuelRight", () -> autoGenerator.repeatingCenterFuelRight());
+            autoChooser.addRoutine("RepeatingCenterFuelLeftCloser", () -> autoGenerator.repeatingCenterFuelLeftCloser());
+            autoChooser.addRoutine("RepeatingCenterFuelRightCloser", () -> autoGenerator.repeatingCenterFuelRightCloser());
+            autoChooser.addRoutine("OutpostFuel", () -> autoGenerator.outpostFuel());
+
+            autoChooser.select("BackUpAndShoot"); // picks a default auto that isn't "do nothing"
+        }
+
+        SmartDashboard.putData("smartDashboard/AutoChooser", autoChooser);
+    }
+
+    public Command getAutonomousCommand() {
+        return autoChooser.selectedCommand();
+    }
+
+    public void updateSelectedAutoDrawing() {
+        autoGenerator.drawSelectedAuto(getAutonomousCommand().getName());
+    }
+
+    // ————— simulation ————— //
+
+    private void configureSimulation() {
+        // initialize drive
+        driveSimulation = new SwerveDriveSimulation(DriveConstants.DRIVE_SIMULATION_CONFIG, Constants.ROBOT_START_POSE);
+        SimulatedArena.getInstance().addDriveTrainSimulation(driveSimulation);
+        Constants.FieldConstants.Zones.logAllZones();
+
+        // initialize fuel
+        fuelSimulation = new FuelSim();
+        fuelSimulation.registerRobot(
+            DriveConstants.WIDTH_X.in(Meters),
+            DriveConstants.WIDTH_Y.in(Meters),
+            Inches.of(6).in(Meters),
+            () -> poseEstimator.getPose(),
+            () -> drive.getFieldRelativeSpeeds()
+        );
+        fuelSimulation.registerIntake(
+            DriveConstants.WIDTH_X.div(2).in(Meters),
+            DriveConstants.WIDTH_X.div(2).in(Meters) + FuelConstants.INTAKE_WIDTH_X.in(Meters),
+            -DriveConstants.WIDTH_Y.div(2).in(Meters),
+            DriveConstants.WIDTH_Y.div(2).in(Meters),
+            () -> { // if intake is on and the hopper isn't full
+                return intake.getIntakeOn() && (Constants.REALISTIC_SIM ? !intake.getHopperFull() : true);
+            }, 
+            () -> { // with realistic sim, if the hopper isn't full, add to the fuel in the hopper
+                if (Constants.REALISTIC_SIM) {
+                    if (intake.getHopperFull()) {
+                        return;
+                    }
+                    intake.addHopperFuel();
+                }
+            }
+        );
+        fuelSimulation.setSubticks(1);
+        fuelSimulation.start();
+
+        if (Constants.REALISTIC_SIM) {
+            fuelSimulation.spawnStartingFuel();
+        }
+    }
+
+    public void updateSimulation() {
+        // update drive
+        SimulatedArena.getInstance().simulationPeriodic();
+        Logger.recordOutput("outputs/simulation/fieldSimulation/robotPosition", driveSimulation.getSimulatedDriveTrainPose());
+
+        // update fuel
+        fuelSimulation.stepSim();
+    }
+
+    public void resetSimulation() {
+        // reset drive
+        Pose2d startPose = DriverStation.getAlliance().orElse(Alliance.Blue) == Alliance.Blue ? 
+        Constants.ROBOT_START_POSE : 
+        Constants.FieldConstants.calculateAllianceFlippedPose(Constants.ROBOT_START_POSE);
+
+        driveSimulation.setSimulationWorldPose(startPose);
+        poseEstimator.resetPosition(startPose);
+        SimulatedArena.getInstance().resetFieldForAuto();
+
+        // reset fuel
+        fuelSimulation.clearFuel();
+
+        if (Constants.REALISTIC_SIM) {
+            fuelSimulation.spawnStartingFuel();
+        }
+    }
+}

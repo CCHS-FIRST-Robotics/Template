@@ -1,0 +1,202 @@
+/**
+ * Original code
+ */
+
+package frc.robot.subsystems.drive;
+
+import static edu.wpi.first.units.Units.*;
+
+import com.ctre.phoenix6.*;
+import com.ctre.phoenix6.swerve.*;
+import com.ctre.phoenix6.swerve.SwerveModuleConstants.*;
+import com.ctre.phoenix6.configs.*;
+import com.ctre.phoenix6.signals.*;
+import edu.wpi.first.math.system.plant.DCMotor;
+import edu.wpi.first.math.kinematics.*;
+import edu.wpi.first.math.geometry.*;
+import edu.wpi.first.units.measure.*;
+import org.ironmaple.simulation.drivesims.COTS;
+import org.ironmaple.simulation.drivesims.configs.*;
+import frc.robot.Constants;
+
+/**
+ * everything marked "MUTABLE" can change as we continue to use the MK4N swerve modules bought in 2025
+ */
+
+public class DriveConstants {
+    public static final CANBus CAN_BUS = new CANBus("", "./logs/example.hoot"); // given by phoenixtuner
+    public static final double ODOMETRY_FREQUENCY = CAN_BUS.isNetworkFD() ? 250.0 : 100.0; // given by phoenixtuner
+
+    // ————— motors ————— //
+
+    private static final DriveMotorArrangement DRIVE_MOTOR_TYPE = DriveMotorArrangement.TalonFX_Integrated;
+    private static final SteerMotorArrangement TURN_MOTOR_TYPE = SteerMotorArrangement.TalonFX_Integrated;
+
+    private static final TalonFXConfiguration DRIVE_CONFIG = new TalonFXConfiguration();
+    private static final TalonFXConfiguration TURN_CONFIG = new TalonFXConfiguration();
+
+    private static final int[] DRIVE_MOTOR_IDS = {11, 21, 31, 41};
+    private static final int[] TURN_MOTOR_IDS = {12, 22, 32, 42};
+    private static final boolean[] DRIVE_INVERSIONS = {false, true, false, true}; // * MUTABLE
+    private static final boolean[] TURN_INVERSIONS = {true, true, true, true}; // * MUTABLE
+    
+    // ————— encoders ————— //
+    
+    private static final CANcoderConfiguration ENCODER_CONFIG = new CANcoderConfiguration();
+    
+    private static final int[] ENCODER_IDS = {13, 23, 33, 43};
+    private static final boolean[] ENCODER_INVERSIONS = {false, false, false, false}; // * MUTABLE
+    private static final Angle[] ENCODER_OFFSETS = { // * MUTABLE
+        Rotations.of(0.265625),
+        Rotations.of(0.28857421875),
+        Rotations.of(-0.383056640625),
+        Rotations.of(-0.275634765625)
+    };
+
+    // ————— gyro ————— //
+    
+    private static final Pigeon2Configuration PIGEON_CONFIG = null;
+    
+    private static final int PIGEON_ID = 5;
+
+    // ————— PIDF ————— //
+
+    private static final Slot0Configs DRIVE_PIDF = new Slot0Configs()
+    .withKP(0.000062333)
+    .withKI(0)
+    .withKD(0)
+    .withKS(0.03422)
+    .withKV(0.13259)
+    .withKA(0.025003); // * MUTABLE
+    
+    private static final Slot0Configs TURN_PIDF = new Slot0Configs()
+    .withKP(15)
+    .withKI(0)
+    .withKD(0)
+    .withKS(0)
+    .withKV(0)
+    .withKA(0)
+    .withStaticFeedforwardSign(StaticFeedforwardSignValue.UseClosedLoopSign); // * MUTABLE
+
+    private static final ClosedLoopOutputType DRIVE_PID_TYPE = ClosedLoopOutputType.Voltage;
+    private static final ClosedLoopOutputType TURN_PID_TYPE = ClosedLoopOutputType.Voltage;
+    private static final SteerFeedbackType TURN_PID_FEEDBACK_TYPE = SteerFeedbackType.FusedCANcoder; // when not pro-licensed, fused/sync automatically fall back to remote
+
+    // ————— modules ————— //
+
+    private static final Distance WHEEL_RADIUS = Inches.of(2);
+    public static final double WHEEL_COEFFICIENT_OF_FRICTION = 1.2; // given by phoenixtuner
+    private static final double MODULE_COUPLE_RATIO = 3.125;
+    private static final double MODULE_DRIVE_GEAR_RATIO = 5.902777777777778;
+    private static final double MODULE_TURN_GEAR_RATIO = 18.75;
+    
+    // ————— drivetrain ————— //
+
+    public static final Mass ROBOT_WEIGHT = Pounds.of(123); // * MUTABLE robot is 100, bumpers are 10, battery is 13
+    public static final Distance WIDTH_X = Inches.of(27.5); // * MUTABLE
+    public static final Distance WIDTH_Y = Inches.of(27.5); // * MUTABLE
+    public static final Distance TRACK_WIDTH_X = Inches.of(22.25); // distance between centers of the front and back wheels // * MUTABLE
+    public static final Distance TRACK_WIDTH_Y = Inches.of(22.25); // distance between centers of the left and right wheels // * MUTABLE
+    public static final Translation2d[] MODULE_TRANSLATIONS = new Translation2d[] { // using the chassisspeeds coordinate plane
+        new Translation2d(TRACK_WIDTH_X.in(Meters) / 2.0, TRACK_WIDTH_Y.in(Meters) / 2.0), // FL
+        new Translation2d(TRACK_WIDTH_X.in(Meters) / 2.0, -TRACK_WIDTH_Y.in(Meters) / 2.0), // FR
+        new Translation2d(-TRACK_WIDTH_X.in(Meters) / 2.0, TRACK_WIDTH_Y.in(Meters) / 2.0), // BL
+        new Translation2d(-TRACK_WIDTH_X.in(Meters) / 2.0, -TRACK_WIDTH_Y.in(Meters) / 2.0) // BR
+    };
+    public static final double TRACK_RADIUS = Math.max(
+        Math.max(
+            Math.hypot(MODULE_TRANSLATIONS[0].getX(), MODULE_TRANSLATIONS[0].getY()),
+            Math.hypot(MODULE_TRANSLATIONS[1].getX(), MODULE_TRANSLATIONS[1].getY())
+        ),
+        Math.max(
+            Math.hypot(MODULE_TRANSLATIONS[2].getX(), MODULE_TRANSLATIONS[2].getY()),
+            Math.hypot(MODULE_TRANSLATIONS[3].getX(), MODULE_TRANSLATIONS[3].getY())
+        )
+    );
+    public static final SwerveDriveKinematics KINEMATICS = new SwerveDriveKinematics(MODULE_TRANSLATIONS);
+
+    public static final LinearVelocity MAX_THEORETICAL_LINEAR_SPEED = MetersPerSecond.of(5.41); // given by phoenixtuner
+    public static final AngularVelocity MAX_THEORETICAL_ANGULAR_SPEED = RadiansPerSecond.of(MAX_THEORETICAL_LINEAR_SPEED.in(MetersPerSecond) / TRACK_RADIUS);
+    public static final LinearVelocity MAX_ALLOWED_LINEAR_SPEED = Constants.CURRENT_MODE == Constants.ROBOT_MODE.REAL ? MetersPerSecond.of(4) : MetersPerSecond.of(2); // * MUTABLE
+    public static final AngularVelocity MAX_ALLOWED_ANGULAR_SPEED = RadiansPerSecond.of(MAX_ALLOWED_LINEAR_SPEED.in(MetersPerSecond) / TRACK_RADIUS);
+    public static final LinearAcceleration MAX_ALLOWED_LINEAR_ACCEL = MetersPerSecondPerSecond.of(15); // * MUTABLE
+    public static final AngularAcceleration MAX_ALLOWED_ANGULAR_ACCEL = RadiansPerSecondPerSecond.of(MAX_ALLOWED_LINEAR_ACCEL.in(MetersPerSecondPerSecond) / TRACK_RADIUS);
+    public static LinearVelocity ALLOWED_LINEAR_SPEED = MAX_ALLOWED_LINEAR_SPEED;
+    public static AngularVelocity ALLOWED_ANGULAR_SPEED = MAX_ALLOWED_ANGULAR_SPEED;
+    public static LinearAcceleration ALLOWED_LINEAR_ACCEL = MAX_ALLOWED_LINEAR_ACCEL;
+    public static AngularAcceleration ALLOWED_ANGULAR_ACCEL = MAX_ALLOWED_ANGULAR_ACCEL;
+    
+    private static final Current DRIVE_STATOR_CURRENT_LIMIT = Amps.of(60.0); // * MUTABLE 
+    public static final Current TURN_STATOR_CURRENT_LIMIT = Amps.of(40.0); // * MUTABLE
+
+    // these are only used for simulation
+    private static final MomentOfInertia DRIVE_INERTIA = KilogramSquareMeters.of(0.01); // given by phoenixtuner
+    private static final MomentOfInertia TURN_INERTIA = KilogramSquareMeters.of(0.01); // given by phoenixtuner
+    private static final Voltage DRIVE_FRICTION_VOLTAGE = Volts.of(0.2); // given by phoenixtuner
+    private static final Voltage TURN_FRICTION_VOLTAGE = Volts.of(0.2); // given by phoenixtuner
+
+    // ————— compilation ————— //
+
+    public static final SwerveDrivetrainConstants DRIVETRAIN_CONSTANTS = new SwerveDrivetrainConstants()
+    .withCANBusName(CAN_BUS.getName())
+    .withPigeon2Id(PIGEON_ID)
+    .withPigeon2Configs(PIGEON_CONFIG);
+
+    private static final SwerveModuleConstantsFactory<TalonFXConfiguration, TalonFXConfiguration, CANcoderConfiguration> 
+    DRIVE_CONSTANT_CREATOR = new SwerveModuleConstantsFactory<TalonFXConfiguration, TalonFXConfiguration, CANcoderConfiguration>()
+    .withDriveMotorGearRatio(MODULE_DRIVE_GEAR_RATIO)
+    .withSteerMotorGearRatio(MODULE_TURN_GEAR_RATIO)
+    .withCouplingGearRatio(MODULE_COUPLE_RATIO)
+    .withWheelRadius(WHEEL_RADIUS)
+    .withSteerMotorGains(TURN_PIDF)
+    .withDriveMotorGains(DRIVE_PIDF)
+    .withSteerMotorClosedLoopOutput(TURN_PID_TYPE)
+    .withDriveMotorClosedLoopOutput(DRIVE_PID_TYPE)
+    .withSlipCurrent(DRIVE_STATOR_CURRENT_LIMIT)
+    .withSpeedAt12Volts(MAX_THEORETICAL_LINEAR_SPEED)
+    .withDriveMotorType(DRIVE_MOTOR_TYPE)
+    .withSteerMotorType(TURN_MOTOR_TYPE)
+    .withFeedbackSource(TURN_PID_FEEDBACK_TYPE)
+    .withDriveMotorInitialConfigs(DRIVE_CONFIG)
+    .withSteerMotorInitialConfigs(TURN_CONFIG)
+    .withEncoderInitialConfigs(ENCODER_CONFIG)
+    .withSteerInertia(TURN_INERTIA)
+    .withDriveInertia(DRIVE_INERTIA)
+    .withSteerFrictionVoltage(TURN_FRICTION_VOLTAGE)
+    .withDriveFrictionVoltage(DRIVE_FRICTION_VOLTAGE);
+
+    @SuppressWarnings("unchecked")
+    public static final SwerveModuleConstants<TalonFXConfiguration, TalonFXConfiguration, CANcoderConfiguration>[]
+    SWERVE_MODULE_CONSTANTS = new SwerveModuleConstants[4];
+    static{
+        for (int i = 0; i < 4; i++) {
+            SWERVE_MODULE_CONSTANTS[i] = DRIVE_CONSTANT_CREATOR.createModuleConstants(
+                TURN_MOTOR_IDS[i],
+                DRIVE_MOTOR_IDS[i],
+                ENCODER_IDS[i],
+                ENCODER_OFFSETS[i],
+                Meters.of(MODULE_TRANSLATIONS[i].getX()), 
+                Meters.of(MODULE_TRANSLATIONS[i].getY()),
+                DRIVE_INVERSIONS[i],
+                TURN_INVERSIONS[i],
+                ENCODER_INVERSIONS[i]
+            );
+        }
+    }
+                    
+    public static final DriveTrainSimulationConfig DRIVE_SIMULATION_CONFIG = DriveTrainSimulationConfig.Default()
+    .withRobotMass(DriveConstants.ROBOT_WEIGHT)
+    .withCustomModuleTranslations(MODULE_TRANSLATIONS)
+    .withGyro(COTS.ofPigeon2())
+    .withSwerveModule(new SwerveModuleSimulationConfig(
+        DCMotor.getKrakenX60(1),
+        DCMotor.getKrakenX60(1),
+        SWERVE_MODULE_CONSTANTS[0].DriveMotorGearRatio,
+        SWERVE_MODULE_CONSTANTS[0].SteerMotorGearRatio,
+        Volts.of(SWERVE_MODULE_CONSTANTS[0].DriveFrictionVoltage),
+        Volts.of(SWERVE_MODULE_CONSTANTS[0].SteerFrictionVoltage),
+        Meters.of(SWERVE_MODULE_CONSTANTS[0].WheelRadius),
+        KilogramSquareMeters.of(SWERVE_MODULE_CONSTANTS[0].SteerInertia),
+        DriveConstants.WHEEL_COEFFICIENT_OF_FRICTION)
+    );
+}
